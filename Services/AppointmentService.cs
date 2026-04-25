@@ -83,8 +83,8 @@ namespace APBD_TASK6.Services
                 ORDER BY a.AppointmentDate;";
             var command = new SqlCommand(query, connection);
 
-            command.Parameters.AddWithValue("@Status", status == null ? DBNull.Value : status);
-            command.Parameters.AddWithValue("@PatientLastName", patientLastName == null ? DBNull.Value : patientLastName);
+            command.Parameters.AddWithValue("@Status", (object?)status ?? DBNull.Value);
+            command.Parameters.AddWithValue("@PatientLastName", (object?)patientLastName ?? DBNull.Value);
 
             await connection.OpenAsync();
             await using var reader = await command.ExecuteReaderAsync();
@@ -100,46 +100,20 @@ namespace APBD_TASK6.Services
         public async Task<AppointmentDetailsDto?> GetAppointmentByIdAsync(int id)
         {
             await using var connection = new SqlConnection(_connectionString);
-            const string query = """
-                
-                SELECT 
-                    a.IdAppointment, 
-                    a.AppointmentDate, 
-                    a.Status, 
-                    a.Reason, 
-                    a.InternalNotes,
-                    a.CreatedAt,
-                    p.IdPatient,
-                    p.FirstName + ' ' + p.LastName AS PatientFullName,
-                    p.Email AS PatientEmail,
-                    p.PhoneNumber AS PatientPhoneNumber,
-                    p.DateOfBirth AS PatientDateOfBirth,
-                    d.IdDoctor,
-                    d.FirstName + ' ' + d.LastName AS DoctorFullName,
-                    s.Name AS DoctorSpecialization,
-                    d.LicenseNumber AS DoctorLicenseNumber
-                FROM dbo.Appointments a 
-                JOIN dbo.Patients p ON p.IdPatient = a.IdPatient 
-                JOIN dbo.Doctors d ON d.IdDoctor = a.IdDoctor
-                JOIN dbo.Specializations s ON d.IdSpecialization = s.IdSpecialization
-                WHERE a.IdAppointment = @IdAppointment;
-                
-                """;
-
-            var command = new SqlCommand(query, connection);
-
-            command.Parameters.AddWithValue("@IdAppointment", id);
-
             await connection.OpenAsync();
-            await using var reader = await command.ExecuteReaderAsync();
-
-            return await reader.ReadAsync() ? MapToAppointmentDetails(reader) : null;
+            return await GetByIdWithConnectionAsync(id, connection);
         }
 
         public async Task UpdateAppointmentAsync(int id, UpdateAppointmentRequestDto appointment)
         {
 
-            var databaseAppointment = await GetAppointmentByIdAsync(id);
+            if (appointment.AppointmentDate <= DateTime.UtcNow)
+                throw new ArgumentException("Appointment date cannot be in the past.");
+
+            await using var connection = new SqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            var databaseAppointment = await GetByIdWithConnectionAsync(id, connection);
 
             if (databaseAppointment == null)
             {
@@ -149,11 +123,8 @@ namespace APBD_TASK6.Services
             if (databaseAppointment.Status == "Completed" 
                 && appointment.AppointmentDate != databaseAppointment.AppointmentDate)
             {
-                throw new AppointmentConflictException("Cannot change appointment date for Completed appointment");
+                throw new AppointmentConflictException("Cannot change appointment date of Completed appointment");
             }
-
-            await using var connection = new SqlConnection(_connectionString);
-            await connection.OpenAsync();
 
 
             bool doctorExists = await DoctorExistsAsync(appointment.IdDoctor, connection);
@@ -168,9 +139,10 @@ namespace APBD_TASK6.Services
                 throw new InvalidOperationException($"Patient with id {appointment.IdPatient} does not exists or is inactive");
             }
 
-            if (appointment.AppointmentDate != databaseAppointment.AppointmentDate)
+            if (appointment.AppointmentDate != databaseAppointment.AppointmentDate
+                || appointment.IdDoctor != databaseAppointment.IdDoctor)
             {
-                bool isConflicting = await CheckConflictingAppointments(appointment.IdDoctor, appointment.AppointmentDate, connection);
+                bool isConflicting = await CheckConflictingAppointments(appointment.IdDoctor, appointment.AppointmentDate, connection, id);
                 if (isConflicting)
                 {
                     throw new AppointmentConflictException($"Doctor already has an appointment at {appointment.AppointmentDate}");
@@ -202,6 +174,69 @@ namespace APBD_TASK6.Services
 
         }
 
+
+        public async Task<int> DeleteAppointmentAsync(int id)
+        {
+            var connection = new SqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            var databaseAppointment = await GetByIdWithConnectionAsync(id, connection);
+
+            if (databaseAppointment == null)
+            {
+                throw new InvalidOperationException($"Appointment with id {id} does not exist");
+            }
+
+            if (databaseAppointment.Status == "Completed")
+            {
+                throw new AppointmentConflictException("Cannot delete appointment that has status Completed");
+            }
+
+            const string query = """
+                DELETE FROM dbo.Appointments
+                WHERE IdAppointment = @idAppointment
+                """;
+            await using var command = new SqlCommand(query, connection);
+            command.Parameters.AddWithValue("@idAppointment", id);
+            return await command.ExecuteNonQueryAsync();
+        }
+
+        private async Task<AppointmentDetailsDto?> GetByIdWithConnectionAsync(int id, SqlConnection connection)
+        {
+            const string query = """
+                
+                SELECT 
+                    a.IdAppointment, 
+                    a.AppointmentDate, 
+                    a.Status, 
+                    a.Reason, 
+                    a.InternalNotes,
+                    a.CreatedAt,
+                    p.IdPatient,
+                    p.FirstName + ' ' + p.LastName AS PatientFullName,
+                    p.Email AS PatientEmail,
+                    p.PhoneNumber AS PatientPhoneNumber,
+                    p.DateOfBirth AS PatientDateOfBirth,
+                    d.IdDoctor,
+                    d.FirstName + ' ' + d.LastName AS DoctorFullName,
+                    s.Name AS DoctorSpecialization,
+                    d.LicenseNumber AS DoctorLicenseNumber
+                FROM dbo.Appointments a 
+                JOIN dbo.Patients p ON p.IdPatient = a.IdPatient 
+                JOIN dbo.Doctors d ON d.IdDoctor = a.IdDoctor
+                JOIN dbo.Specializations s ON d.IdSpecialization = s.IdSpecialization
+                WHERE a.IdAppointment = @IdAppointment;
+                
+                """;
+
+            var command = new SqlCommand(query, connection);
+
+            command.Parameters.AddWithValue("@IdAppointment", id);
+
+            await using var reader = await command.ExecuteReaderAsync();
+
+            return await reader.ReadAsync() ? MapToAppointmentDetails(reader) : null;
+        } 
 
         private static AppointmentListDto MapToListAppointment(SqlDataReader reader)
         {
@@ -272,19 +307,21 @@ namespace APBD_TASK6.Services
             return true;
         }
 
-        private async Task<bool> CheckConflictingAppointments(int doctorId, DateTime appoinmentDate, SqlConnection connection)
+        private async Task<bool> CheckConflictingAppointments(int doctorId, DateTime appoinmentDate, SqlConnection connection, int? excludeId = null)
         {
             const string conflictQuery = """
                     SELECT 1 FROM dbo.Appointments
                     WHERE IdDoctor = @IdDoctor
                     AND AppointmentDate = @AppointmentDate
                     AND Status != 'Cancelled'
+                    AND (@ExcludeId IS NULL OR IdAppointment != @ExcludeId)
             """;
 
             await using (var conflictCmd = new SqlCommand(conflictQuery, connection))
             {
                 conflictCmd.Parameters.AddWithValue("@IdDoctor", doctorId);
                 conflictCmd.Parameters.AddWithValue("@AppointmentDate", appoinmentDate);
+                conflictCmd.Parameters.AddWithValue("@ExcludeId", (object?)excludeId ?? DBNull.Value);
                 var conflict = await conflictCmd.ExecuteScalarAsync();
 
                 if (conflict is not null)
@@ -293,5 +330,6 @@ namespace APBD_TASK6.Services
 
             return false;
         }
+
     }
 }

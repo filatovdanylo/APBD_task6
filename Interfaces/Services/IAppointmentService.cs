@@ -8,5 +8,6 @@ namespace APBD_TASK6.Interfaces.Services
         Task<AppointmentDetailsDto?> GetAppointmentByIdAsync(int id);
         Task<int> CreateAppointmentAsync(CreateAppointmentRequestDto appointment);
         Task UpdateAppointmentAsync(int id, UpdateAppointmentRequestDto appointment);
+        Task<int> DeleteAppointmentAsync(int id);
     }
 }

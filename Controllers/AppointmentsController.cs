@@ -2,6 +2,7 @@
 using APBD_TASK6.Exceptions;
 using APBD_TASK6.Interfaces.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.IdentityModel.Tokens.Experimental;
 
 namespace APBD_TASK6.Controllers
 {
@@ -85,13 +86,35 @@ namespace APBD_TASK6.Controllers
             try
             {
                 await _appointmentsService.UpdateAppointmentAsync(id, appointment);
-                return NoContent();
+                return Ok();
             } 
             catch (InvalidOperationException ex)
             {
                 var error = CreateErrorResponse(ex.Message);
                 return NotFound(error);
             } 
+            catch (AppointmentConflictException ex)
+            {
+                var error = CreateErrorResponse(ex.Message);
+                return Conflict(error);
+            }
+        }
+
+        [HttpDelete("{id:int}")]
+        public async Task<IActionResult> DeleteAppointment(int id)
+        {
+            try
+            {
+                int deleted = await _appointmentsService.DeleteAppointmentAsync(id);
+                if (deleted == 0) 
+                    return NotFound();
+                return NoContent();
+            } 
+            catch (InvalidOperationException ex)
+            {
+                var error = CreateErrorResponse(ex.Message);
+                return NotFound(error);
+            }
             catch (AppointmentConflictException ex)
             {
                 var error = CreateErrorResponse(ex.Message);
