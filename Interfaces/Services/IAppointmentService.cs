@@ -6,7 +6,7 @@ namespace APBD_TASK6.Interfaces.Services
     {
         Task<List<AppointmentListDto>> GetAllAppointmentsAsync(string? status, string? patientLastName);
         Task<AppointmentDetailsDto?> GetAppointmentByIdAsync(int id);
-        Task<int> CreateAppointmentAsync();
-        Task<bool> UpdateAppointmentAsync();
+        Task<int> CreateAppointmentAsync(CreateAppointmentRequestDto appointment);
+        Task UpdateAppointmentAsync(int id, UpdateAppointmentRequestDto appointment);
     }
 }
